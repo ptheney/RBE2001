@@ -13,9 +13,14 @@
 #define TASK_4 4
 #define TASK_5 5
 
-// Create objects
-Chassis chassis;
+// Define pins and variables for sensors
+#define ECHO_PIN 7 // for ultrasonic rangefinder
+#define TRIG_PIN 8 // for ultrasonic rangefinder
+#define LINE_PIN 9 // for line following sensor
+long duration;
+long distance;
 
+Chassis chassis;
 int motorEffort = 100;
 
 // Starting state is idle
@@ -33,6 +38,10 @@ void setup()
   // Initialize chassis, and IR decoder
   chassis.init(); 
   decoder.init();
+
+  // Set up ultrasonic sensor
+  pinMode(ECHO_PIN, INPUT);
+  pinMode(TRIG_PIN, OUTPUT);
 }
 
 // Handles key press from IR remote
@@ -71,6 +80,29 @@ void handleKeyPress(int16_t keyPress)
   // When number 5 is pressed, execute task 5
   if (keyPress == NUM_5)
     state = TASK_5; 
+}
+
+// Read distance measurements from ultrasonic sensor
+void readUltrasonic()
+{
+  // Read from trig pin on ultrasonic sensor
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  duration = pulseIn(ECHO_PIN, HIGH);
+  distance = duration/58.2; // distance in centimeters
+
+  // Print distance
+  Serial.println(distance);
+}
+
+// Read values from line following sensor
+void readLineFollower()
+{
+ 
 }
 
 void loop()
