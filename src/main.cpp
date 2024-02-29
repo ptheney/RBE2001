@@ -4,6 +4,9 @@
 #include <Chassis.h>
 #include <IRdecoder.h>
 #include <ir_codes.h>
+#include <servo32u4.h>
+#include "Timer.h"
+#include "BlueMotor.h"
 
 // Define constants for states
 #define IDLE   0
@@ -13,15 +16,37 @@
 #define TASK_4 4
 #define TASK_5 5
 
-// Define pins and variables for sensors
+// Create objects
+Chassis chassis;
+BlueMotor motor;
+
+// Define pins 
 #define ECHO_PIN 7 // for ultrasonic rangefinder
 #define TRIG_PIN 8 // for ultrasonic rangefinder
 #define LINE_PIN 9 // for line following sensor
-long duration;
-long distance;
+int servoPin = 5;      // for gripper
+int linearPotPin = A0; // for gripper
 
-Chassis chassis;
-int motorEffort = 100;
+// Gripper Variables
+int servoStop = 1490;
+int servoJawDown = 1300;
+int servoJawUp = 2000;
+
+int linearPotVoltageADC = 500;
+int jawOpenPotVoltageADC = 153;
+int jawClosedPotVoltageADC = 1022;
+
+double prePotVoltageADC = jawOpenPotVoltageADC;
+double postPotVoltageADC = jawClosedPotVoltageADC;
+double difference = 0;
+
+Servo32U4Pin5 jawServo;  
+Timer printTimer(200);
+
+// Ultrasonic Variables
+long startTime = 0;
+long duration = 0;
+long distance = 0; 
 
 // Starting state is idle
 int state = IDLE;
@@ -31,17 +56,37 @@ const uint8_t IR_DETECTOR_PIN = 14;
 IRDecoder decoder(IR_DETECTOR_PIN);
 int16_t keyPress;
 
+// Timer variables for IR
+long keyMillis = 0;
+unsigned long keyInterval = 1000UL;
+
 void setup()
 {
   Serial.begin(9600);
 
-  // Initialize chassis, and IR decoder
+  // Initialize chassis and IR decoder
   chassis.init(); 
   decoder.init();
 
-  // Set up ultrasonic sensor
-  pinMode(ECHO_PIN, INPUT);
+  // Attach servo motor for gripper
+  jawServo.attach();
+
+  // Set up ultrasonic sensor with interrupts
+  pinMode(ECHO_PIN, INPUT_PULLUP);
   pinMode(TRIG_PIN, OUTPUT);
+  attachInterrupt(digitalPinToInterrupt(ECHO_PIN), ultrasonicISR, CHANGE);
+
+  // Clear trigPin
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+
+  // Record start time
+  startTime = micros();
+
+  // Set trigPin
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
 }
 
 // Handles key press from IR remote
@@ -82,37 +127,69 @@ void handleKeyPress(int16_t keyPress)
     state = TASK_5; 
 }
 
-// Read distance measurements from ultrasonic sensor
-void readUltrasonic()
+// Resets gripper to the open position
+void openGripper()
 {
-  // Read from trig pin on ultrasonic sensor
-  digitalWrite(TRIG_PIN, LOW);
-  delayMicroseconds(2);
-  digitalWrite(TRIG_PIN, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(TRIG_PIN, LOW);
 
-  duration = pulseIn(ECHO_PIN, HIGH);
-  distance = duration/58.2; // distance in centimeters
+}
+
+// Closes gripper onto solar panel
+void closeGripper()
+{
+
+}
+
+// Drives BlueMotor to move fourbar
+void moveFourbar(double degrees)
+{
+  // Convert degrees to encoder counts by multiplying by 1.5, or 540/360
+  motor.moveTo(degrees * 1.5);
+}
+
+// Read distance measurements from ultrasonic sensor
+void ultrasonicISR()
+{
+  // Read echoPin
+  duration = micros() - startTime;
+  distance = duration / 58; // distance in cm
 
   // Print distance
   Serial.println(distance);
+  delay(100);
+
+  // Clear trigPin
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+
+  // Record start time
+  startTime = micros();
+
+  // Set trigPin
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
 }
 
 // Read values from line following sensor
-void readLineFollower()
+void lineFollow()
 {
- 
+  
 }
 
 void loop()
 {
-  // Check for a key press on the remote
-  keyPress = decoder.getKeyCode();
+  // Read IR remote every second
+  if (millis() - keyMillis > keyInterval)
+  {
+    keyMillis += keyInterval;
   
-  // Handle key press on IR remote
-  if (keyPress > -1) 
-    handleKeyPress(keyPress); 
+    // Check for a key press on the remote
+    keyPress = decoder.getKeyCode();
+  
+    // Handle key press on IR remote
+    if (keyPress > -1) 
+      handleKeyPress(keyPress); 
+  }
 
   // State 0: IDLE
   if (state == IDLE)
@@ -141,8 +218,8 @@ void loop()
   // State 3: Task 3
   else if (state == TASK_3)
   {
-    // Use line following algorithm to navigate to other house
-    // Stop robot halfway (switch state to idle)
+    // Line follow to other house
+    // Stop robot halfway (idle)
     // Continue line following
   }
   // State 4: Task 4
