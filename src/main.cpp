@@ -20,6 +20,9 @@
 Chassis chassis;
 BlueMotor motor;
 
+// Define Blue Motor Characteristics
+#define BLUE_MOTOR_ENCODER_RESOLUTION 540
+
 // Define pins 
 #define ECHO_PIN 7 // for ultrasonic rangefinder
 #define TRIG_PIN 8 // for ultrasonic rangefinder
@@ -59,6 +62,30 @@ int16_t keyPress;
 // Timer variables for IR
 long keyMillis = 0;
 unsigned long keyInterval = 1000UL;
+
+// Read distance measurements from ultrasonic sensor
+void ultrasonicISR()
+{
+  // Read echoPin
+  duration = micros() - startTime;
+  distance = duration / 58; // distance in cm
+
+  // Print distance
+  Serial.println(distance);
+  delay(100);
+
+  // Clear trigPin
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+
+  // Record start time
+  startTime = micros();
+
+  // Set trigPin
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+}
 
 void setup()
 {
@@ -127,6 +154,12 @@ void handleKeyPress(int16_t keyPress)
     state = TASK_5; 
 }
 
+// Converts Degrees to Blue Motor Encoder Counts
+int getEncoderCountsFromDegrees(double degrees) 
+{
+  return (degrees / 360.0) * (double)(BLUE_MOTOR_ENCODER_RESOLUTION); 
+}  
+
 // Resets gripper to the open position
 void openGripper()
 {
@@ -143,31 +176,7 @@ void closeGripper()
 void moveFourbar(double degrees)
 {
   // Convert degrees to encoder counts by multiplying by 1.5, or 540/360
-  motor.moveTo(degrees * 1.5);
-}
-
-// Read distance measurements from ultrasonic sensor
-void ultrasonicISR()
-{
-  // Read echoPin
-  duration = micros() - startTime;
-  distance = duration / 58; // distance in cm
-
-  // Print distance
-  Serial.println(distance);
-  delay(100);
-
-  // Clear trigPin
-  digitalWrite(TRIG_PIN, LOW);
-  delayMicroseconds(2);
-
-  // Record start time
-  startTime = micros();
-
-  // Set trigPin
-  digitalWrite(TRIG_PIN, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(TRIG_PIN, LOW);
+  motor.moveTo(getEncoderCountsFromDegrees(degrees));
 }
 
 // Read values from line following sensor

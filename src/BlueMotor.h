@@ -4,7 +4,7 @@ class BlueMotor
 {
 public:
     BlueMotor();
-    void setEffort(int effort);
+    void setEffort(int effort); // [0,400]
     void moveTo(long position);
     long getPosition();
     void reset();
@@ -12,7 +12,8 @@ public:
 
 private:
     void setEffort(int effort, bool clockwise);
-    static void isr();
+    static void ISR_ENCB_EVAL();
+    static void ISR_ENCA_EVAL();
     const int tolerance = 3;
     const int PWMOutPin = 11;
     const int AIN2 = 4;
