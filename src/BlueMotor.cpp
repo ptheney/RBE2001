@@ -85,15 +85,21 @@ void BlueMotor::ISR_ENCB_EVAL()
     }
 }
 
+/**
+ * @brief Used for driving the motor. Effort ranges from [-400, +400] such that negative will move
+ * the four-bar and arm downwards and positive effort will do the opposite. 
+ * 
+ * @param effort (int) : The specified effort. 
+ */
 void BlueMotor::setEffort(int effort)
 {
     if (effort < 0)
     {
-        setEffort(-effort, true);
+        setEffort(-effort, false);
     }
     else
     {
-        setEffort(effort, false);
+        setEffort(effort, true);
     }
 }
 

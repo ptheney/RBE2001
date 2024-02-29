@@ -114,6 +114,9 @@ void setup()
   digitalWrite(TRIG_PIN, HIGH);
   delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
+
+  motor.setEffort(400);
+  while(1) {}
 }
 
 // Handles key press from IR remote
