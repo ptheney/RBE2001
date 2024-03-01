@@ -27,7 +27,7 @@ BlueMotor motor;
 #define ECHO_PIN 7 // for ultrasonic rangefinder
 #define TRIG_PIN 8 // for ultrasonic rangefinder
 #define LINE_PIN 9 // for line following sensor
-int servoPin = 5;      // for gripper
+#define SERVO_PIN = 5; // for gripper
 int linearPotPin = A0; // for gripper
 
 // Gripper Variables
@@ -39,12 +39,8 @@ int linearPotVoltageADC = 500;
 int jawOpenPotVoltageADC = 153;
 int jawClosedPotVoltageADC = 1022;
 
-double prePotVoltageADC = jawOpenPotVoltageADC;
-double postPotVoltageADC = jawClosedPotVoltageADC;
-double difference = 0;
-
 Servo32U4Pin5 jawServo;  
-Timer printTimer(200);
+Timer printTimer(500);
 
 // Ultrasonic Variables
 long startTime = 0;
@@ -114,9 +110,6 @@ void setup()
   digitalWrite(TRIG_PIN, HIGH);
   delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
-
-  motor.setEffort(400);
-  while(1) {}
 }
 
 // Handles key press from IR remote
@@ -163,23 +156,57 @@ int getEncoderCountsFromDegrees(double degrees)
   return (degrees / 360.0) * (double)(BLUE_MOTOR_ENCODER_RESOLUTION); 
 }  
 
-// Resets gripper to the open position
-void openGripper()
-{
-
-}
-
-// Closes gripper onto solar panel
-void closeGripper()
-{
-
-}
-
 // Drives BlueMotor to move fourbar
 void moveFourbar(double degrees)
 {
   // Convert degrees to encoder counts by multiplying by 1.5, or 540/360
   motor.moveTo(getEncoderCountsFromDegrees(degrees));
+}
+
+// Resets gripper to the open position
+void openGripper()
+{
+  // Close gripper
+  jawServo.writeMicroseconds(servoJawDown);
+
+  // Close until specified close state
+  while (1)//(linearPotVoltageADC < jawClosedPotVoltageADC)
+  {
+    // Read potentiometer
+    linearPotVoltageADC = analogRead(linearPotPin);
+
+    // Print potentiometer reading
+    //if (printTimer.isExpired())
+    {
+      Serial.print("linearPotVoltageADC: ");
+      Serial.println(linearPotVoltageADC);
+    }
+  }
+  // Stop servo
+  jawServo.writeMicroseconds(servoStop);
+}
+
+// Closes gripper to grab solar panel
+void closeGripper()
+{
+  // Close gripper
+  jawServo.writeMicroseconds(servoJawUp);
+
+  // Close until specified close state
+  while (1)//(readPotDistance() >= 5)//(linearPotVoltageADC < jawClosedPotVoltageADC)
+  {
+    // Read potentiometer
+    linearPotVoltageADC = analogRead(linearPotPin);
+
+    // Print potentiometer reading
+    //if (printTimer.isExpired())
+    {
+      Serial.print("linearPotVoltageADC: ");
+      Serial.println(linearPotVoltageADC);
+    }
+  }
+  // Stop servo
+  jawServo.writeMicroseconds(servoStop);
 }
 
 // Read values from line following sensor
@@ -190,6 +217,7 @@ void lineFollow()
 
 void loop()
 {
+  openGripper();
   // Read IR remote every second
   if (millis() - keyMillis > keyInterval)
   {
