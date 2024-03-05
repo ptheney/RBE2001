@@ -1,6 +1,6 @@
 #include <Arduino.h>
 #include <Romi32U4.h>
-#include <Romi32U4Motors.h>
+// #include <Romi32U4Motors.h>
 #include <Chassis.h>
 #include <IRdecoder.h>
 #include <ir_codes.h>
@@ -11,11 +11,22 @@
 
 // Define constants for states
 #define IDLE   0
-#define TASK_1 1
-#define TASK_2 2
-#define TASK_3 3
-#define TASK_4 4
-#define TASK_5 5
+#define GO_TO_ROOF_45_INIT 1
+#define GO_TO_ROOF_45 2
+#define FACE_ROOF 3
+#define REACH_PANEL_1 4
+#define TAKE_ROOF_PANEL_1 5
+#define GO_TO_BOX 6
+#define DELIVER_BOX_PANEL 7
+#define LEAVE_BOX_PANEL_1 8
+#define TRAVEL_1  9
+
+#define LEAVE_BOX_PANEL_2 10
+#define GO_TO_BOX_PANEL_2 11
+#define TAKE_ROOF_PANEL_2 12
+#define GO_TO_ROOF_25 13
+#define LEAVE_ROOF_25 14
+#define TRAVEL_2  15
 
 // Create objects
 Chassis chassis;
@@ -28,19 +39,20 @@ QTRSensors lineFollower;
 // Define pins 
 #define ECHO_PIN 7 // for ultrasonic rangefinder
 #define TRIG_PIN 8 // for ultrasonic rangefinder
-#define LINE_PIN_LEFT  9  // for line following sensor
-#define LINE_PIN_RIGHT 3 // for line following sensor
+#define LINE_PIN_LEFT  A2  // for line following sensor
+#define LINE_PIN_RIGHT A3 // for line following sensor
 #define SERVO_PIN = 5; // for gripper
-int linearPotPin = A0; // for gripper
+
+const unsigned int linearPotPin = A0; // for gripper
 
 // Gripper Variables
 int servoStop = 1490;
-int servoJawDown = 1300;
+int servoJawDown = 100;
 int servoJawUp = 2000;
 
 int linearPotVoltageADC = 512;
-int jawOpenPotVoltageADC = 400;
-int jawClosedPotVoltageADC = 1000;
+int jawOpenPotVoltageADC = 650;
+int jawClosedPotVoltageADC = 970;
 
 Servo32U4Pin5 jawServo;  
 Timer printTimer(500);
@@ -50,28 +62,23 @@ long startTime = 0;
 long duration = 0;
 long distance = 0; 
 
-// Line Following Variables
-int lastError = 0;  // last error for derivative control
-float KP = 0;       // Kp constant
-float KD = 0;       // Kd constant
-
 int rightEffort = 0;   // right motor effort
 int leftEffort = 0;    // left motor effort
 int rightDefault = 50; // default speed for right motor
 int leftDefault = 50;  // default speed for left motor
-int rightMax = 400;    // max speed for right motor
-int leftMax = 400;     // max speed for left motor
-int rightMin = -400;   // min speed for right motor
-int leftMin = -400;    // min speed for left motor
 
 // Chassis Variables
-int motorEffort = 100;
+int motorEffort = 50;
 long driveMillis = 0;
 long spinMillis = 0;
 unsigned long spinInterval = 1000UL;
 
 // Starting state is idle
 int state = IDLE;
+int previousState = -1;
+
+bool gripperOpened = false;
+bool gripperClosed = false;
 
 // Set up IR decoder
 const uint8_t IR_DETECTOR_PIN = 14;
@@ -82,28 +89,10 @@ int16_t keyPress;
 long keyMillis = 0;
 unsigned long keyInterval = 1000UL;
 
-// Read distance measurements from ultrasonic sensor
-void ultrasonicISR()
-{
-  // Read echoPin
-  duration = micros() - startTime;
-  distance = duration / 58; // distance in cm
-
-  // Print distance
-  Serial.println(distance);
-  delay(100);
-
-  // Clear trigPin
-  digitalWrite(TRIG_PIN, LOW);
-  delayMicroseconds(2);
-
-  // Record start time
-  startTime = micros();
-
-  // Set trigPin
-  digitalWrite(TRIG_PIN, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(TRIG_PIN, LOW);
+double initialCounts = 0;
+void initMovement() {
+  chassis.resetEncoders();
+  initialCounts = (double)(chassis.getLeftEncoderCount() + chassis.getRightEncoderCount()) / 2.0;
 }
 
 void setup()
@@ -113,73 +102,51 @@ void setup()
   // Initialize chassis and IR decoder
   chassis.init(); 
   decoder.init();
+  motor.setup();
 
   // Attach servo motor for gripper
   jawServo.attach();
 
-  // Set up ultrasonic sensor with interrupts
-  pinMode(ECHO_PIN, INPUT_PULLUP);
-  pinMode(TRIG_PIN, OUTPUT);
-  attachInterrupt(digitalPinToInterrupt(ECHO_PIN), ultrasonicISR, CHANGE);
-
-  // Set up line following sensor
-  lineFollower.setTypeAnalog();
-  lineFollower.setSensorPins((const uint8_t[]) {A2, A3}, 2);
-  lineFollower.setEmitterPins(LINE_PIN_LEFT, LINE_PIN_RIGHT);
-  lineFollower.calibrate();
-
-  // Clear trigPin
-  digitalWrite(TRIG_PIN, LOW);
-  delayMicroseconds(2);
-
-  // Record start time
-  startTime = micros();
-
-  // Set trigPin
-  digitalWrite(TRIG_PIN, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(TRIG_PIN, LOW);
-
   // Stop servo
   jawServo.writeMicroseconds(servoStop);
+  initMovement();
 }
 
 // Handles key press from IR remote
-void handleKeyPress(int16_t keyPress)
+void handleKeyPress(int16_t keyPress, bool currentlyPressed)
 {
   // Print key that was pressed
-  Serial.println("Key: " + String(keyPress));
+  //Serial.println("Key: " + String(keyPress));
+  //Serial.println(state);
 
   // When stop is pressed, go to idle unless already in idle
-  if (keyPress == STOP_MODE)
+  if (keyPress == STOP_MODE && currentlyPressed)
   {
     // If not already idle, switch to idle
-    if (state != IDLE)
+    if (state != IDLE) {
+      previousState = state; 
       state = IDLE;
+    }
     // If already idle, then must be in middle of Task 3
-    else
-      state = TASK_3;
+    else if (state == IDLE) {
+      state = (previousState == -1) ? GO_TO_ROOF_45_INIT : previousState;
+    }
   }
-     
   // When number 1 is pressed, execute task 1
-  if (keyPress == NUM_1)
-     state = TASK_1;
-
+  else if (keyPress == NUM_1 && currentlyPressed)
+    state = GO_TO_ROOF_45;
   // When number 2 is pressed, execute task 2
-  if (keyPress == NUM_2)
-    state = TASK_2;
+  else if (keyPress == NUM_2 && currentlyPressed)
+    state = FACE_ROOF;
 
   // When number 3 is pressed, execute task 3
-  if (keyPress == NUM_3)
-    state = TASK_3;  
+  else if (keyPress == NUM_3 && currentlyPressed)
+    state = REACH_PANEL_1;  
 
   // When number 4 is pressed, execute task 4
-  if (keyPress == NUM_4)
-    state = TASK_4;   
+  else if (keyPress == NUM_4 && currentlyPressed)
+    state = TAKE_ROOF_PANEL_1;
 
-  // When number 5 is pressed, execute task 5
-  if (keyPress == NUM_5)
-    state = TASK_5; 
 }
 
 // Converts Degrees to Blue Motor Encoder Counts
@@ -188,37 +155,23 @@ int getEncoderCountsFromDegrees(double degrees)
   return (degrees / 360.0) * (double)(BLUE_MOTOR_ENCODER_RESOLUTION); 
 }  
 
-// Drives BlueMotor to move fourbar
-void moveFourbar(double degrees)
-{
-  // Convert degrees to encoder counts by multiplying by 1.5, or 540/360
-  motor.moveTo(getEncoderCountsFromDegrees(degrees));
-}
-
 // Resets gripper to the open position
 void openGripper()
 {
   // Read potentiometer
   linearPotVoltageADC = analogRead(linearPotPin);
-  
   // Move servo jaw down until specified open state
-  while (linearPotVoltageADC > jawOpenPotVoltageADC)
-  {
-    // Open gripper
-    jawServo.writeMicroseconds(servoJawDown);
-
-    // Read potentiometer
-    linearPotVoltageADC = analogRead(linearPotPin);
-
-    // Print potentiometer reading
-    if (printTimer.isExpired())
-    {
-      Serial.print("linearPotVoltageADC: ");
-      Serial.println(linearPotVoltageADC);
-    }
+  if (linearPotVoltageADC < jawOpenPotVoltageADC) {
+    gripperOpened = true;
+    gripperClosed = false;
+    // Stop servo
+    jawServo.writeMicroseconds(servoStop);
+    return;
   }
-  // Stop servo
-  jawServo.writeMicroseconds(servoStop);
+  
+  gripperOpened = false;
+  // Open gripper
+  jawServo.writeMicroseconds(servoJawDown);
 }
 
 // Closes gripper to grab solar panel
@@ -228,156 +181,487 @@ void closeGripper()
   linearPotVoltageADC = analogRead(linearPotPin);
 
   // Move servo jaw up until specified close state
-  while (linearPotVoltageADC < jawClosedPotVoltageADC)
+  if (linearPotVoltageADC > jawClosedPotVoltageADC)
   {
-    // Close gripper
-    jawServo.writeMicroseconds(servoJawUp);
-
-    // Read potentiometer
-    linearPotVoltageADC = analogRead(linearPotPin);
-
-    // Print potentiometer reading
-    if (printTimer.isExpired())
-    {
-      Serial.print("linearPotVoltageADC: ");
-      Serial.println(linearPotVoltageADC);
-    }
+    gripperClosed = true;
+    gripperOpened = false;
+    // Stop servo
+    jawServo.writeMicroseconds(servoStop);
+    return;
   }
-  // Stop servo
-  jawServo.writeMicroseconds(servoStop);
+
+  gripperClosed = false;
+  // Close gripper
+  jawServo.writeMicroseconds(servoJawUp);
 }
 
 // Read values from line following sensor
-void lineFollow()
+void lineFollow(double leftSpeed, double rightSpeed, double inches, bool* done)
 {
-  // Get position from sensor
-  uint16_t position = lineFollower.readLineBlack((uint16_t *) LINE_PIN_LEFT);
-
+  // Get back left (A2) and back right (A3) for error:
   // Error is positive to the right, negative to the left
-  int error = position - 3500; 
+  static int lastError = 0;  // last error for derivative control
+  static int error = 0;
+  lastError = error; 
+  error = analogRead(LINE_PIN_LEFT) - analogRead(LINE_PIN_RIGHT); 
+  double currentCounts = (double)(chassis.getLeftEncoderCount() + chassis.getRightEncoderCount()) / 2.0;
+  double wheelDiameterInches = 2.75; 
+  double deltaCounts = (inches / (wheelDiameterInches * 3.14159265)) * 1440.0; 
 
-  // Use PID controller with Kp and Kd
-  int motorSpeed = KP * error + KD * (error - lastError);
-  lastError = error;
-  
-  // Calculate efforts for left and right motors
-  rightEffort = rightDefault - motorSpeed;
-  leftEffort = leftDefault + motorSpeed;  
+  if(abs(currentCounts - initialCounts) < abs(deltaCounts)) {
+    // Left bigger right smaller -> + speed left , - speed right
+    // Right bigger left smaller -> - speed left, + speed right
 
-  // Keep right motor speed between minimum and maximum
-  if (rightEffort < rightMin)
-    rightEffort = rightMin;
-  else if (rightEffort > rightMax)
-    rightEffort = rightMax;
+    // Use PID controller with Kp and Kd
+    // Line Following Variables
+    float kp = 0.03, kd = 0.016;      
+    int diffSpeed = kp * error + kd * (error - lastError);
+    lastError = error; 
 
-  // Keep left motor speed between minimum and maximum
-  if (leftEffort < leftMin)
-    leftEffort = leftMin;
-  else if (leftEffort > leftMax)
-    leftEffort = leftMax;  
-
-  // Move motors accordingly
-  chassis.setMotorEfforts(rightEffort, leftEffort);
-}
-
-// Drive forward for number of milliseconds (call driveMillis = millis() right before)
-void driveForward(int ms)
-{
-  // Spin for 2000 ms 
-  if (millis() - driveMillis < ms)
-  {
-    // Set both motors to same effort
-    chassis.setMotorEfforts(motorEffort, motorEffort);
+    // Move motors accordingly
+    chassis.setWheelSpeeds(leftSpeed + diffSpeed, rightSpeed - diffSpeed);
+  }
+  else {
+    *done = true;
+    error = 0;
+    lastError = 0;
+    chassis.setWheelSpeeds(0, 0);
+    return;
   }
 }
 
-// Rotates chassis 180 degrees (call spinMillis = millis() right before)
-void turnAround()
+/**
+ * @brief Rotates robot about its center as an in-place turn. Counterclockwise is
+ * a positive turn and a clockwise is negative where turns are specified in degrees. 
+*
+ * @param degrees (double) : The specified in-place turn in degrees. 
+ */
+void pointTurn(double degrees, bool* done)
 {
-  // Spin for 1000 ms
-  if (millis() - spinMillis < spinInterval)
-  {
-    // Robot spins 180 degrees in place
-    chassis.setMotorEfforts(motorEffort, -motorEffort);
+  degrees = degrees * (2.0 * 3.14159265 / 360.0);
+  double baseSpeed = 8;//cm/s
+  double trackWidthInches = 5.5;
+  double wheelDiameterInches = 2.75;
+
+  double arcInches = degrees * (trackWidthInches / 2.0);
+  double deltaCounts = (arcInches / (wheelDiameterInches * 3.14159265)) * 1440.0; 
+
+  double sign = degrees / abs(degrees);
+  double currentCounts = (double)(abs(chassis.getLeftEncoderCount()) + abs(chassis.getRightEncoderCount())) / 2.0;
+  if(abs(currentCounts - initialCounts) < abs(deltaCounts)) {
+    chassis.setWheelSpeeds(-sign * baseSpeed, sign * baseSpeed);  
+  }
+  else {
+    *done = true;
+    chassis.setMotorEfforts(0, 0);
+  }
+}
+
+void alignOnIntersection(bool* done) {
+  // Get back left (A2) and back right (A3) for error:
+  // Error is positive to the right, negative to the left
+  static double error = 0; 
+  static double prevError = 0;
+  static double errorSum = 0;
+
+  prevError = error;
+  error = analogRead(LINE_PIN_LEFT) - analogRead(LINE_PIN_RIGHT); 
+
+  // Left bigger right smaller -> + speed left , - speed right
+  // Right bigger left smaller -> - speed left, + speed right
+
+  // Use PID controller with Kp and Kd
+  double kp = 0.15, ki = 0.002, kd = 0.02;
+  int diffSpeed = (kp * error) + (ki * errorSum) + (kd * (error - prevError));
+  errorSum += error;
+
+  // Calculate efforts for left and right motors
+  rightEffort = - diffSpeed;
+  leftEffort = diffSpeed;  
+
+  // Move motors accordingly
+  chassis.setMotorEfforts(leftEffort, rightEffort);
+
+  if(error < 10.0) {
+    *done = true;
+    error = 0; 
+    prevError = 0;
+    errorSum = 0;
+    chassis.setWheelSpeeds(0, 0);
+  }
+}
+
+void driveForward(double inches, bool* done) {
+
+  double baseSpeed = 5;
+  double wheelDiameterInches = 2.75;
+  double currentCounts = (double)(chassis.getLeftEncoderCount() + chassis.getRightEncoderCount()) / 2.0;
+  double sign = inches / abs(inches);
+
+  double deltaCounts = (inches / (wheelDiameterInches * 3.14159265)) * 1440.0; 
+
+  if(abs(currentCounts - initialCounts) < abs(deltaCounts)) {
+    chassis.setWheelSpeeds(-sign * baseSpeed, -sign * baseSpeed);
+  }
+  else {
+    *done = true;
+    chassis.setWheelSpeeds(0, 0);
   }
 }
 
 void loop()
 {
-  openGripper();
-
-  // Check for a key press on the remote
-  keyPress = decoder.getKeyCode();
-
-  // If stop is pressed, handle key press immediately
-  if (keyPress == STOP_MODE)
-    handleKeyPress(keyPress);
-
+  int16_t readKeyPress = decoder.getKeyCode();
+  bool keyPressed = false; 
   // Read IR remote every second
-  if (millis() - keyMillis > keyInterval)
+  if (millis() - keyMillis > keyInterval && readKeyPress > -1)
   {
-    keyMillis += keyInterval;
-  
-    // Handle key press on IR remote
-    if (keyPress > -1) 
-      handleKeyPress(keyPress); 
+      // Check for a key press on the remote
+    keyPress = readKeyPress;
+    keyMillis = millis();  
+    keyPressed = true;
   }
+  //Serial.println(state);
+  // Handle key press on IR remote
+  if (keyPress > -1) 
+      handleKeyPress(keyPress, keyPressed); 
 
   // State 0: IDLE
   if (state == IDLE)
   {
+    initMovement();
     chassis.idle();
+    return;
   }
   // State 1: Run Task 1
-  else if (state == TASK_1)
+  else if (state == GO_TO_ROOF_45_INIT)
   {
+    static bool done = false, preparedArm = false, turned = false; 
+    if(done) {
+      done = false, preparedArm = false, turned = false;
+      state = GO_TO_ROOF_45;
+      initMovement();
+      delay(1000);
+      return;
+    }
     // Drive to the house
-    driveForward(5000);
-
-    // Pick panel
-
-    // Rotate 180 degrees
-    turnAround();
-
-    // Place panel at staging area
-
-    // Stop --> go to state 0: Idle
-    state = IDLE;
+    openGripper();
+    if(!preparedArm) {
+      motor.moveToLow(&preparedArm);
+    }
+    else if(!turned) {
+      pointTurn(180, &turned);  
+    }  
+    else {
+      alignOnIntersection(&done);
+    }
   }
   // State 2: Task 2
-  else if (state == TASK_2)
+  else if (state == GO_TO_ROOF_45)
   {
-    // Drive towards the staging area
-    // Pick panel
-    // Rotate 180 degrees
-    // Place panel at house
-    // Release panel
-    // Stop --> go to state 0: Idle
+    static bool done = false, traveled = false;;
+    if(done) {
+      done = false, traveled = false; 
+      state = FACE_ROOF;
+      initMovement();
+      delay(500);
+      return;
+    }
+
+    if(!traveled) {
+      lineFollow(13, 13, 9, &traveled);
+    }
+    else {
+      alignOnIntersection(&done);
+    }
   }
   // State 3: Task 3
-  else if (state == TASK_3)
+  else if (state == FACE_ROOF)
   {
-    // Line follow to other house
-    // Stop robot halfway --> go to state 0: Idle
-    // Continue line following
+    static bool done = false, turnedAround = false, turnedAroundEnded = false; 
+    if(done && gripperOpened) {
+      done = false, turnedAround = false, turnedAroundEnded = false;
+      state = REACH_PANEL_1;
+      initMovement();
+      delay(500);
+      return;
+    }
+
+    openGripper();
+    if(!turnedAround) {
+      pointTurn(180, &turnedAround);
+    }
+    else if(!turnedAroundEnded) {
+      turnedAroundEnded = true;
+      initMovement();
+    }
+    else {
+      alignOnIntersection(&done);
+    }
   }
   // State 4: Task 4
-  else if (state == TASK_4)
+  else if (state == REACH_PANEL_1)
   {
-    // Drive to the house
-    // Pick panel 
-    // Rotate 180 degrees
-    // Place panel at staging area
-    // Stop --> go to state 0: Idle
+    static bool done = false, startClosingGripper = false;
+    if(done && gripperClosed) {
+      done = false, startClosingGripper = false; 
+      state = TAKE_ROOF_PANEL_1;
+      initMovement();
+      delay(500);
+      return;
+    }
+   
+    closeGripper();
+    if (!startClosingGripper){
+      driveForward(1, &startClosingGripper);
+    } 
+    else if (gripperClosed) {
+      motor.moveTo45Deg(&done);
+    }
   }
   // State 5: Task 5
-  else if (state == TASK_5)
+  else if (state == TAKE_ROOF_PANEL_1)
   {
-    // Drive towards the staging area
-    // Pick panel
-    // Rotate 180 degrees
-    // Place panel at house
-    // Release panel
-    // Stop --> go to state 0: Idle
+    static bool done = false, movedForward = false;
+    if(done && movedForward) {
+      done = false; 
+      state = DELIVER_BOX_PANEL;
+      initMovement();
+      delay(500);
+      return;
+    }
+
+    motor.moveToHigh(&done);
+    if(!movedForward) {
+      driveForward(1, &movedForward);
+    }
+  }
+  // Stage 6: Task 6
+  else if (state == DELIVER_BOX_PANEL) {
+    static bool done = false, leftRoof = false, leftRoofEnded = false, lowerArm = false, turnAround = false, turnAroundEnded = false, aligned = false;
+    if(done) {
+      done = false, leftRoof = false, leftRoofEnded = false, lowerArm = false, turnAround = false, turnAroundEnded = false, aligned = false;
+      state = LEAVE_BOX_PANEL_1;
+      initMovement();
+      delay(500);
+      return;
+    }
+
+    if(!leftRoof) {
+      lineFollow(13, 13, 8.5, &leftRoof);
+    }
+    else if(!leftRoofEnded) {
+      leftRoofEnded = true;
+      initMovement();
+      delay(500);
+    }
+    else if(!turnAround) {
+      pointTurn(180, &turnAround);
+    }
+    else if(!lowerArm) {
+      motor.moveToStart(&lowerArm);
+    }
+    else if(!turnAroundEnded) {
+      turnAroundEnded = true;
+      initMovement();
+      delay(500);
+    } 
+    else if(!aligned){
+      alignOnIntersection(&aligned);
+    }
+    else {
+      openGripper();
+      done = gripperOpened;
+    }
+  }
+  else if (state == LEAVE_BOX_PANEL_1) {
+    static bool done = false, leftBoxPanel = false, leftBoxPanelEnded = false, raiseArm = false;   
+    if(done) {
+      done = false, leftBoxPanel = false, leftBoxPanelEnded = false, raiseArm = false;
+      state = TRAVEL_1;
+      initMovement();
+      delay(500);
+      return;
+    }
+
+    if(!leftBoxPanel) {
+      lineFollow(13, 13, 3, &leftBoxPanel);
+    }
+    else if(!leftBoxPanelEnded) {
+      leftBoxPanelEnded = true;
+      initMovement();
+      delay(500);
+    }
+    else if(!raiseArm) {
+      motor.moveAboveBox(&raiseArm);
+    }
+    else if(!done) {
+      driveForward(2.8, &done);
+    }
+  }
+  else if (state == TRAVEL_1) {
+    static bool done = false, turned = false, turnedEnded = false, traveled = false, traveledEnded = false;
+    if(done) {
+      done = false, turned = false, turnedEnded = false, traveled = false, traveledEnded = false;
+      state = LEAVE_BOX_PANEL_2;
+      initMovement();
+      delay(500);
+      return;
+    }
+
+    if(!turned) {
+      pointTurn(90, &turned);
+    }
+    else if(!turnedEnded) {
+      turnedEnded = true;
+      initMovement();
+    }
+    else if (!traveled) {
+      lineFollow(13, 13, 35.75, &traveled);
+    }
+    else if(!traveledEnded) {
+      traveledEnded = true;
+      initMovement();
+    }
+    else {
+      pointTurn(90, &done);
+    }
+  }
+  else if (state == LEAVE_BOX_PANEL_2) {
+    static bool done = false, leftBoxPanel = false, leftBoxPanelEnded = false, loweredArm = false, aligned = false;   
+    if(done) {
+      done = false, leftBoxPanel = false, leftBoxPanelEnded = false, loweredArm = false, aligned = false; 
+      state = GO_TO_BOX_PANEL_2;
+      initMovement();
+      delay(500);
+      return;
+    }
+
+    if(!leftBoxPanel) {
+      driveForward(8, &leftBoxPanel);
+    }
+    else if(!leftBoxPanelEnded) {
+      leftBoxPanelEnded = true;
+      initMovement();
+    }
+    else if(!loweredArm) {
+      motor.moveToStart(&loweredArm);
+    }
+    else if(!aligned) {
+      lineFollow(5, 5, 4, &aligned);
+    }
+    else {
+      pointTurn(180, &done);
+    }
+  }
+  else if (state == GO_TO_BOX_PANEL_2) {
+    static bool done = false;
+    if(done) {
+      done = false;
+      state = TAKE_ROOF_PANEL_2;
+      initMovement();
+      delay(500);
+      return;
+    }
+
+    openGripper();
+    if(!done && gripperOpened) {
+      driveForward(1, &done);
+    }
+  }
+  else if (state == TAKE_ROOF_PANEL_2) {
+    static bool done = false; 
+    if(done) {
+      done = false;
+      state = GO_TO_ROOF_25;
+      initMovement();
+      delay(500);
+      return;
+    }
+
+    closeGripper();
+    if(gripperClosed) {
+      motor.moveToHigh(&done);
+    }
+  }
+  else if (state == GO_TO_ROOF_25) {
+    static bool done = false, leftBoxPanel = false, leftBoxPanelEnded = false, turnedAround = false; 
+    if(done) {
+      done = false, leftBoxPanel = false;
+      state = LEAVE_ROOF_25;
+      initMovement();
+      delay(500);
+      return;
+    }
+
+    if(!leftBoxPanel) {
+      lineFollow(13, 13, 7.5, &leftBoxPanel);
+    }
+    else if(!leftBoxPanelEnded) {
+      leftBoxPanelEnded = true;
+      initMovement();
+    }
+    else if(!turnedAround) {
+      pointTurn(180, &turnedAround);
+    }
+    else {
+      alignOnIntersection(&done);
+    }
+  }
+  else if (state == LEAVE_ROOF_25) {
+    static bool done = false, loweredArm = false, leftRoof = false, leftRoofEnded = false; 
+    if(done) {
+      done = false, loweredArm = false, leftRoof = false, leftRoofEnded = false;
+      state = TRAVEL_2;
+      initMovement();
+      delay(500);
+      return;
+    }
+
+    if(!loweredArm) {
+      motor.moveTo25Deg(&loweredArm);
+    }
+    else if(!gripperOpened) {
+      openGripper();
+    }
+    else if(!leftRoof) {
+      lineFollow(13, 13, 9, &leftRoof);
+    }
+    else if(!leftRoofEnded) {
+      leftRoofEnded = true;
+      initMovement();
+    }
+    else {
+      pointTurn(90, &done);
+    }
+  }
+  else if (state == TRAVEL_2) {
+    static bool done = false, traveled = false, traveledEnded = false, turned = false, turnedEnded = false; 
+    if(done && gripperClosed) {
+      done = false, traveled = false, traveledEnded = false, turned = false, turnedEnded = false; 
+      state = IDLE; 
+      initMovement(); 
+      delay(500);
+      return;
+    }
+
+    closeGripper();
+    if(!traveled) {
+      lineFollow(13, 13, 35, &traveled);
+    }
+    else if(!traveledEnded) {
+      traveledEnded = true;
+      initMovement();
+    }
+    else if(!turned) {
+      pointTurn(-90, &turned);
+    }
+    else if(!turnedEnded) {
+      turnedEnded = true;
+      initMovement();
+    }
+    else {
+      motor.moveTo(0, &done);
+    }
   }
 }

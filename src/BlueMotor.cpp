@@ -13,6 +13,36 @@ BlueMotor::BlueMotor()
 
 }
 
+void BlueMotor::moveToStart(bool* done)
+{
+    moveTo(START_COUNT, done);
+}
+
+void BlueMotor::moveAboveBox(bool* done) 
+{
+    moveTo(ABOVE_BOX_COUNT, done);
+}
+
+void BlueMotor::moveToLow(bool* done)
+{
+    moveTo(_LOW_COUNT, done);
+} 
+
+void BlueMotor::moveTo45Deg(bool* done)
+{
+    moveTo(_45_DEG_COUNT, done);
+}
+
+void BlueMotor::moveToHigh(bool* done) 
+{
+    moveTo(_HIGH_COUNT, done);
+}
+
+void BlueMotor::moveTo25Deg(bool* done)
+{
+    moveTo(_25_DEG_COUNT, done);
+}
+
 void BlueMotor::setup()
 {
     pinMode(PWMOutPin, OUTPUT);
@@ -59,14 +89,15 @@ void BlueMotor::ISR_ENCA_EVAL()
     // ENCA == 0, ENCB == 1
     // Encoder A is leading after A has changed state, therefore we increment counts for a clockwise turn. 
     if(digitalRead(0) == digitalRead(1)) {
-        count++;
+        count--;
     }
     // Encoder B is leading after A has changed state, therefore we decrement counts for a counter-clockwise turn. 
     else {
-        count--;
+        count++;
     }
 }
-
+// 19911 for 45 degree, 2904 for 25 degree, def is -637
+// => 993 for 45 deg, 2548 for 25 deg, def is 0
 /**
  * @brief Interrupts program to read motor direction to update encoder counts
  * as a qaudrature encoder system. This method is called whenever the Blue Motor
@@ -77,11 +108,11 @@ void BlueMotor::ISR_ENCB_EVAL()
     // ENCA == 0, ENCB == 1
     // Encoder B is leading after B has changed state, therefore we decrement counts for a counter-clockwise turn.
     if(digitalRead(0) == digitalRead(1)) {
-        count--;
+        count++;
     }
     // Encoder A is leading after B has changed state, therefore we increment counts for a clockwise turn. 
     else {
-        count++;
+        count--;
     }
 }
 
@@ -128,28 +159,34 @@ void BlueMotor::setEffort(int effort, bool clockwise)
  * motor position. The error tolerance is about +/-1%  within being a specified 
  * position. 
  * 
- * @param target (long) : The specified encoder counts to move to. 
+ * @param target (long) : The specified encoder counts to move to.
+ * @param done (bool*) : Species when the state completes 
  */
-void BlueMotor::moveTo(long target)  //Move to this encoder position within the specified
+void BlueMotor::moveTo(long target, bool* done)  //Move to this encoder position within the specified
 {                                    //tolerance in the header file using proportional control
                                     //then stop
     // Specify tolerance to get a "good enough" approximation when moving the actual motor position to 
     // the specified position. 
-    double error_tolerance = 0.01;
+    double error_tolerance = 0.001;
     // Error sum for accumulating error for a PI controller. 
-    double error_sum = 0; 
+    static double error_sum = 0; 
+    // Find error.
+    double error = 0;
     // Loop PI controller until actual motor position in counts is within tolerance. 
-    while(getPosition() < (target * (1.0 - error_tolerance)) || getPosition() > (target * (1.0 + error_tolerance))) {
+    if(getPosition() < (target * (1.0 - error_tolerance)) || getPosition() > (target * (1.0 + error_tolerance))) {
         // Specified PI constants:
-        double kp = 0.45, ki = 0.001;
+        double kp = 0.65, ki = 0.00025;
 
         // Compute controller error, accumulative error, and output effort to set:
-        double error = target - getPosition();
-        double effort = (error * kp) + (error_sum * ki); 
+        error = target - getPosition();
+        double effort = (error * kp) + (error_sum * ki);
         setEffort(effort);
         error_sum += error;
     }
-
-    // Turn motor off after reaching desired position. 
-    setEffort(0);
+    else {
+        // Turn motor off after reaching desired position. 
+        *done = true;
+        setEffort(0);
+        error_sum = 0;
+    }
 }
