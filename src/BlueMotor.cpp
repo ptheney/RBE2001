@@ -15,31 +15,37 @@ BlueMotor::BlueMotor()
 
 void BlueMotor::moveToStart(bool* done)
 {
+    Serial.println("test 1");
     moveTo(START_COUNT, done);
 }
 
 void BlueMotor::moveAboveBox(bool* done) 
 {
+    Serial.println("test 2");
     moveTo(ABOVE_BOX_COUNT, done);
 }
 
 void BlueMotor::moveToLow(bool* done)
 {
+    Serial.println("test 3");
     moveTo(_LOW_COUNT, done);
 } 
 
 void BlueMotor::moveTo45Deg(bool* done)
 {
+    Serial.println("test 4");
     moveTo(_45_DEG_COUNT, done);
 }
 
 void BlueMotor::moveToHigh(bool* done) 
 {
+    Serial.println("test 5");
     moveTo(_HIGH_COUNT, done);
 }
 
 void BlueMotor::moveTo25Deg(bool* done)
 {
+    Serial.println("test 6");
     moveTo(_25_DEG_COUNT, done);
 }
 

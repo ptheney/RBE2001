@@ -49,6 +49,7 @@ const unsigned int linearPotPin = A0; // for gripper
 int servoStop = 1490;
 int servoJawDown = 100;
 int servoJawUp = 2000;
+int previousServoMicroseconds = -1;
 
 int linearPotVoltageADC = 512;
 int jawOpenPotVoltageADC = 650;
@@ -126,26 +127,29 @@ void handleKeyPress(int16_t keyPress, bool currentlyPressed)
     if (state != IDLE) {
       previousState = state; 
       state = IDLE;
+      previousServoMicroseconds = jawServo.getMicroseconds();
+      jawServo.writeMicroseconds(servoStop);
     }
     // If already idle, then must be in middle of Task 3
     else if (state == IDLE) {
       state = (previousState == -1) ? GO_TO_ROOF_45_INIT : previousState;
+      jawServo.writeMicroseconds(previousServoMicroseconds);
     }
   }
   // When number 1 is pressed, execute task 1
   else if (keyPress == NUM_1 && currentlyPressed)
-    state = GO_TO_ROOF_45;
+    state = GO_TO_ROOF_45_INIT;
   // When number 2 is pressed, execute task 2
   else if (keyPress == NUM_2 && currentlyPressed)
-    state = FACE_ROOF;
+    state = LEAVE_BOX_PANEL_1;
 
   // When number 3 is pressed, execute task 3
   else if (keyPress == NUM_3 && currentlyPressed)
-    state = REACH_PANEL_1;  
+    state = LEAVE_BOX_PANEL_2;  
 
   // When number 4 is pressed, execute task 4
   else if (keyPress == NUM_4 && currentlyPressed)
-    state = TAKE_ROOF_PANEL_1;
+    state = TRAVEL_2;
 
 }
 
@@ -329,11 +333,10 @@ void loop()
   // State 0: IDLE
   if (state == IDLE)
   {
-    initMovement();
     chassis.idle();
     return;
   }
-  // State 1: Run Task 1
+  // IR Command 1:
   else if (state == GO_TO_ROOF_45_INIT)
   {
     static bool done = false, preparedArm = false, turned = false; 
@@ -356,10 +359,9 @@ void loop()
       alignOnIntersection(&done);
     }
   }
-  // State 2: Task 2
   else if (state == GO_TO_ROOF_45)
   {
-    static bool done = false, traveled = false;;
+    static bool done = false, traveled = false;
     if(done) {
       done = false, traveled = false; 
       state = FACE_ROOF;
@@ -375,7 +377,6 @@ void loop()
       alignOnIntersection(&done);
     }
   }
-  // State 3: Task 3
   else if (state == FACE_ROOF)
   {
     static bool done = false, turnedAround = false, turnedAroundEnded = false; 
@@ -399,7 +400,6 @@ void loop()
       alignOnIntersection(&done);
     }
   }
-  // State 4: Task 4
   else if (state == REACH_PANEL_1)
   {
     static bool done = false, startClosingGripper = false;
@@ -419,12 +419,11 @@ void loop()
       motor.moveTo45Deg(&done);
     }
   }
-  // State 5: Task 5
   else if (state == TAKE_ROOF_PANEL_1)
   {
     static bool done = false, movedForward = false;
     if(done && movedForward) {
-      done = false; 
+      done = false, movedForward = false; 
       state = DELIVER_BOX_PANEL;
       initMovement();
       delay(500);
@@ -436,12 +435,11 @@ void loop()
       driveForward(1, &movedForward);
     }
   }
-  // Stage 6: Task 6
   else if (state == DELIVER_BOX_PANEL) {
     static bool done = false, leftRoof = false, leftRoofEnded = false, lowerArm = false, turnAround = false, turnAroundEnded = false, aligned = false;
     if(done) {
       done = false, leftRoof = false, leftRoofEnded = false, lowerArm = false, turnAround = false, turnAroundEnded = false, aligned = false;
-      state = LEAVE_BOX_PANEL_1;
+      state = IDLE;
       initMovement();
       delay(500);
       return;
@@ -474,6 +472,7 @@ void loop()
       done = gripperOpened;
     }
   }
+  // IR Command 2:
   else if (state == LEAVE_BOX_PANEL_1) {
     static bool done = false, leftBoxPanel = false, leftBoxPanelEnded = false, raiseArm = false;   
     if(done) {
@@ -503,7 +502,7 @@ void loop()
     static bool done = false, turned = false, turnedEnded = false, traveled = false, traveledEnded = false;
     if(done) {
       done = false, turned = false, turnedEnded = false, traveled = false, traveledEnded = false;
-      state = LEAVE_BOX_PANEL_2;
+      state = IDLE;
       initMovement();
       delay(500);
       return;
@@ -527,6 +526,7 @@ void loop()
       pointTurn(90, &done);
     }
   }
+  // IR Command 3:
   else if (state == LEAVE_BOX_PANEL_2) {
     static bool done = false, leftBoxPanel = false, leftBoxPanelEnded = false, loweredArm = false, aligned = false;   
     if(done) {
@@ -566,7 +566,7 @@ void loop()
 
     openGripper();
     if(!done && gripperOpened) {
-      driveForward(1, &done);
+      driveForward(1.25, &done);
     }
   }
   else if (state == TAKE_ROOF_PANEL_2) {
@@ -587,7 +587,7 @@ void loop()
   else if (state == GO_TO_ROOF_25) {
     static bool done = false, leftBoxPanel = false, leftBoxPanelEnded = false, turnedAround = false; 
     if(done) {
-      done = false, leftBoxPanel = false;
+      done = false, leftBoxPanel = false, leftBoxPanelEnded = false, turnedAround = false;
       state = LEAVE_ROOF_25;
       initMovement();
       delay(500);
@@ -612,7 +612,7 @@ void loop()
     static bool done = false, loweredArm = false, leftRoof = false, leftRoofEnded = false; 
     if(done) {
       done = false, loweredArm = false, leftRoof = false, leftRoofEnded = false;
-      state = TRAVEL_2;
+      state = IDLE;
       initMovement();
       delay(500);
       return;
@@ -635,6 +635,7 @@ void loop()
       pointTurn(90, &done);
     }
   }
+  // IR Command 4:
   else if (state == TRAVEL_2) {
     static bool done = false, traveled = false, traveledEnded = false, turned = false, turnedEnded = false; 
     if(done && gripperClosed) {
